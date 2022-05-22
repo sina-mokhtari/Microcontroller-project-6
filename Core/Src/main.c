@@ -95,6 +95,9 @@ int previousLight = 0;
 int tmp;
 int temperatureSamplesSum = 0, temperatureSamplesCount = 0, lightSamplesSum = 0, lightSamplesCount =
 		0;
+bool buzzerOn = false;
+bool showError = false;
+int errorTimerCounter = 0;
 
 uint32_t lastExtiTime = 0;
 
@@ -962,6 +965,32 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM7) {
 		printDateTime();
 	}
+	if (htim->Instance == TIM4) {
+		errorTimerCounter++;
+		if (errorTimerCounter == 1) {
+			if (buzzerOn) {
+				buzzerChangeTone(1000, 1000);
+			}
+			else if (showError) {
+				setCursor(9, 2);
+				print("MOVE!!!");
+				// TODO turn on led
+			}
+		}
+		else if (errorTimerCounter == 3) {
+			if (buzzerOn) {
+				buzzerChangeTone(1000, 0);
+				buzzerOn = false;
+			}
+			else if (showError) {
+				setCursor(9, 2);
+				print("       ");
+				// TODO turn off led
+				showError = false;
+			}
+		}
+
+	}
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
@@ -975,6 +1004,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		if (temperatureSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
 			tmp = temperatureSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
 			if (tmp > temperature) {
+				// TODO Start timer 4
 				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 				if (logIdx < LOG_BUFFER_SIZE)
@@ -1045,7 +1075,7 @@ void buzzerChangeTone(uint16_t freq, uint16_t volume) {
 
 void updateLightBar() {
 	setCursor(15, 0);
-	sprintf(tmpstr, "%d", newLight);
+	sprintf(tmpstr, "%02d", newLight);
 	print(tmpstr);
 
 	if (newLight / 10 == previousLight / 10)
@@ -1084,7 +1114,7 @@ void updateLightBar() {
 
 void updateTemperature() {
 	setCursor(3, 2);
-	sprintf(tmpstr, "%d", temperature);
+	sprintf(tmpstr, "%02d", temperature);
 	print(tmpstr);
 }
 /* USER CODE END 4 */

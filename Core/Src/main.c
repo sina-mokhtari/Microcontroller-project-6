@@ -92,7 +92,8 @@ int temperatueRawValue, lightRawValue;
 int temperatureNoramlizedValue, lightNormalizedValue;
 int temperature = 0;
 bool isTempChanged = false;
-int light = 0;
+int newLight = 0;
+int previousLight = 0;
 int tmp;
 int temperatureSamplesSum = 0, temperatureSamplesCount = 0, lightSamplesSum = 0, lightSamplesCount =
 		0;
@@ -938,6 +939,48 @@ void buzzerChangeTone(uint16_t freq, uint16_t volume) {
 
 		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, pulseWidth);
 	}
+}
+
+void updateLightBar() {
+	setCursor(15, 0);
+	sprintf(tmpstr, "%d", light);
+	print(tmpstr);
+
+	if (newLight / 10 == previousLight / 10)
+		return;
+
+	if (newLight / 10 < 10) {
+		createChar(3, barStart);
+		setCursor(3, 0);
+		write(3);
+	}
+	else {
+		createChar(3, black);
+		setCursor(3, 0);
+		write(3);
+	}
+
+	for (int i = 4; i < 12; i++) {
+		if (i - 2 <= newLight / 10) {
+			setCursor(i, 0);
+			write(3);
+		}
+		else {
+			setCursor(i, 0);
+			write(4);
+		}
+	}
+
+	if (newLight >= 100) {
+		setCursor(12, 0);
+		write(3);
+	}
+	else {
+		setCursor(12, 0);
+		write(5);
+	}
+
+	previousLight = newLight;
 }
 /* USER CODE END 4 */
 

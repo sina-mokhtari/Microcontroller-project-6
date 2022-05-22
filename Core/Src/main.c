@@ -214,6 +214,9 @@ int main(void)
 	write(0);
 	write(1);
 	write(2);
+	setCursor(1, 2);
+	write(6);
+	setCursor(5, degree);
 
   /* USER CODE END 2 */
 

@@ -91,7 +91,6 @@ char tmpstr[200];
 int temperatueRawValue, lightRawValue;
 int temperatureNoramlizedValue, lightNormalizedValue;
 int temperature = 0;
-bool isTempChanged = false;
 int newLight = 0;
 int previousLight = 0;
 int tmp;
@@ -880,7 +879,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-	if (hadc->Instance == ADC1) { // volume
+	if (hadc->Instance == ADC1) { // temperature
 		temperatueRawValue = HAL_ADC_GetValue(hadc);
 
 		temperatureSamplesSum += ((float) temperatueRawValue * 22 / 273); // simplified of (x - 0) * 330 / (4095 - 0)
@@ -889,14 +888,19 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 		if (temperatureSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
 			tmp = temperatureSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
-			if (tmp > temperature)
-				isTempChanged = true;
+			if (tmp > temperature){
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				if (logIdx < LOG_BUFFER_SIZE)
+					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, temperatureRaise };
+			}
 			temperature = tmp;
 			temperatureSamplesCount = 0;
 			temperatureSamplesSum = 0;
+			updateTemperature();
 		}
 		HAL_ADC_Start_IT(&hadc2);
-	} else if (hadc->Instance == ADC2) { // temperature
+	} else if (hadc->Instance == ADC2) { // light
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
 
@@ -905,9 +909,22 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		lightSamplesCount++;
 
 		if (lightSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
-			light = lightSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+			newLight = lightSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
 			lightSamplesCount = 0;
 			lightSamplesSum = 0;
+			updateLightBar();
+			if (newLight > 80) {
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				if (logIdx < LOG_BUFFER_SIZE)
+					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightHigh };
+			}
+			else if (newLight < 20) {
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				if (logIdx < LOG_BUFFER_SIZE)
+					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightLow };
+			}
 		}
 
 		HAL_ADC_Start_IT(&hadc1);

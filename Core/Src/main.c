@@ -982,6 +982,12 @@ void updateLightBar() {
 
 	previousLight = newLight;
 }
+
+void updateTemperature() {
+	setCursor(3, 2);
+	sprintf(tmpstr, "%d", temperature);
+	print(tmpstr);
+}
 /* USER CODE END 4 */
 
 /**

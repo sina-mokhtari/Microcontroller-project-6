@@ -943,6 +943,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				showError = false;
 			}
 			HAL_TIM_Base_Stop_IT(&htim4);
+			errorTimerCounter = 0;
 		}
 
 	}

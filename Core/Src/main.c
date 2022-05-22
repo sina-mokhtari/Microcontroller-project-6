@@ -133,6 +133,7 @@ static void MX_ADC2_Init(void);
 static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 void buzzerChangeTone(uint16_t freq, uint16_t volume);
+void printDateTime();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -190,10 +191,6 @@ int main(void) {
 	HAL_RTC_SetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 	HAL_RTC_SetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 
-	HAL_TIM_Base_Start_IT(&htim6);
-	HAL_TIM_PWM_Start(buzzerPwmTimer, buzzerPwmChannel);
-	HAL_ADC_Start_IT(&hadc1);
-
 	LiquidCrystal(GPIOD, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13,
 	LCD_D14);
 
@@ -208,7 +205,7 @@ int main(void) {
 
 	begin(20, 4);
 
-	clear();
+	//clear();
 	setCursor(0, 0);
 	write(0);
 	write(1);
@@ -217,6 +214,13 @@ int main(void) {
 	write(6);
 	setCursor(5, 2);
 	write(7);
+	setCursor(17, 0);
+	write('%');
+
+	HAL_TIM_Base_Start_IT(&htim6);
+	HAL_TIM_Base_Start_IT(&htim7);
+	HAL_TIM_PWM_Start(buzzerPwmTimer, buzzerPwmChannel);
+	HAL_ADC_Start_IT(&hadc1);
 
 	/* USER CODE END 2 */
 
@@ -763,13 +767,13 @@ static void MX_GPIO_Init(void) {
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOE,
-			CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin
-					| LD6_Pin, GPIO_PIN_RESET);
+	CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin | LD6_Pin,
+			GPIO_PIN_RESET);
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOD,
-			GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13
-					| GPIO_PIN_14, GPIO_PIN_RESET);
+	GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14,
+			GPIO_PIN_RESET);
 
 	/*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT2_Pin */
 	GPIO_InitStruct.Pin = DRDY_Pin | MEMS_INT3_Pin | MEMS_INT4_Pin | MEMS_INT2_Pin;
@@ -867,9 +871,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		}
 	}
 	if (htim->Instance == TIM7) {
-		setCursor(15, 0);
-		sprintf(tmpstr, "%d%%", light);
-		print(tmpstr);
+		/*setCursor(15, 0);
+		 sprintf(tmpstr, "%d%%", light);
+		 print(tmpstr);*/
+		printDateTime();
 	}
 }
 
@@ -907,6 +912,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		HAL_ADC_Start_IT(&hadc1);
 		HAL_Delay(ADC_DELAY);
 	}
+}
+
+void printDateTime() {
+	HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+	HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+	setCursor(2, 3);
+	sprintf(tmpstr, "%02d/%02d/%02d-%02d:%02d:%02d", rtcDate.Year, rtcDate.Month, rtcDate.Date,
+			rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
+	print(tmpstr);
 }
 void buzzerChangeTone(uint16_t freq, uint16_t volume) {
 	if (freq == 0 || freq > 20000) {

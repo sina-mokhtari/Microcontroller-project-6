@@ -21,28 +21,42 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include <string.h>
+#include "LiquidCrystal.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef unsigned char byte;
 
+enum logType {
+	lightLow, lightHigh, movement, temperature
+};
+
+typedef struct {
+	RTC_DateTypeDef date;
+	RTC_TimeTypeDef time;
+	enum logType type;
+
+} log;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define D9 GPIO_PIN_9
-#define D10 GPIO_PIN_10
-#define D11 GPIO_PIN_11
-#define D12 GPIO_PIN_12
-#define D13 GPIO_PIN_4
-#define D14 GPIO_PIN_14
-#define D15 GPIO_PIN_15
+#define LCD_D8 GPIO_PIN_8
+#define LCD_D9 GPIO_PIN_9
+#define LCD_D10 GPIO_PIN_10
+#define LCD_D11 GPIO_PIN_11
+#define LCD_D12 GPIO_PIN_12
+#define LCD_D13 GPIO_PIN_13
+#define LCD_D14 GPIO_PIN_14
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define LOG_BUFFER_SIZE 1000
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -52,10 +66,38 @@ RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi1;
 
+TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim8;
+
+UART_HandleTypeDef huart2;
+
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
+RTC_TimeTypeDef rtcTime;
+RTC_DateTypeDef rtcDate;
 
+char tmpstr[200];
+
+uint32_t lastExtiTime = 0;
+
+log logBuffer[LOG_BUFFER_SIZE];
+uint16_t logIdx = 0;
+
+TIM_HandleTypeDef *buzzerPwmTimer = &htim8;
+uint32_t buzzerPwmChannel = TIM_CHANNEL_1;
+
+byte black[] = { 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F };
+byte barEmpty[] = { 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F };
+byte barStart[] = { 0x1F, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F };
+byte barEnd[] = { 0x1F, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x1F };
+
+byte sun[] = { 0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E, 0x00 };
+byte sunShineRight[] = { 0x00, 0x08, 0x10, 0x00, 0x1E, 0x00, 0x10, 0x08 };
+byte sunShineLeft[] = { 0x00, 0x02, 0x01, 0x00, 0x0F, 0x00, 0x01, 0x02 };
+
+byte thermometer[] = { 0x00, 0x06, 0x06, 0x06, 0x06, 0x09, 0x09, 0x06 };
+byte degree[] = { 0x00, 0x07, 0x05, 0x07, 0x00, 0x00, 0x00, 0x00 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -65,8 +107,11 @@ static void MX_I2C1_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USB_PCD_Init(void);
 static void MX_RTC_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_TIM6_Init(void);
+static void MX_TIM8_Init(void);
 /* USER CODE BEGIN PFP */
-
+void buzzerChangeTone(uint16_t freq, uint16_t volume);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -96,7 +141,7 @@ int main(void) {
 	SystemClock_Config();
 
 	/* USER CODE BEGIN SysInit */
-//
+
 	/* USER CODE END SysInit */
 
 	/* Initialize all configured peripherals */
@@ -105,8 +150,40 @@ int main(void) {
 	MX_SPI1_Init();
 	MX_USB_PCD_Init();
 	MX_RTC_Init();
+	MX_USART2_UART_Init();
+	MX_TIM6_Init();
+	MX_TIM8_Init();
 	/* USER CODE BEGIN 2 */
-	HAL_GPIO_WritePin(GPIOE, GPIO_PIN_8, 1);
+
+	rtcTime.Seconds = 0;
+	rtcTime.Minutes = 0;
+	rtcTime.Hours = 0;
+
+	rtcDate.Year = 0;
+	rtcDate.Month = 0;
+	rtcDate.Date = 0;
+
+	HAL_RTC_SetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+	HAL_RTC_SetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+
+	HAL_TIM_Base_Start_IT(&htim6);
+	HAL_TIM_PWM_Start(buzzerPwmTimer, buzzerPwmChannel);
+
+	LiquidCrystal(GPIOD, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13,
+	LCD_D14);
+
+	createChar(0, sunShineLeft);
+	createChar(1, sun);
+	createChar(2, sunShineRight);
+
+	begin(20, 4);
+
+	clear();
+	setCursor(0, 0);
+	write(0);
+	write(1);
+	write(2);
+
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -115,6 +192,8 @@ int main(void) {
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
+
+		//HAL_Delay(100);
 	}
 	/* USER CODE END 3 */
 }
@@ -157,10 +236,13 @@ void SystemClock_Config(void) {
 	if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK) {
 		Error_Handler();
 	}
-	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB | RCC_PERIPHCLK_I2C1 | RCC_PERIPHCLK_RTC;
+	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB | RCC_PERIPHCLK_USART2
+			| RCC_PERIPHCLK_I2C1 | RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_TIM8;
+	PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
 	PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
 	PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
 	PeriphClkInit.USBClockSelection = RCC_USBCLKSOURCE_PLL;
+	PeriphClkInit.Tim8ClockSelection = RCC_TIM8CLK_HCLK;
 	if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
 		Error_Handler();
 	}
@@ -308,6 +390,147 @@ static void MX_SPI1_Init(void) {
 }
 
 /**
+ * @brief TIM6 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM6_Init(void) {
+
+	/* USER CODE BEGIN TIM6_Init 0 */
+
+	/* USER CODE END TIM6_Init 0 */
+
+	TIM_MasterConfigTypeDef sMasterConfig = { 0 };
+
+	/* USER CODE BEGIN TIM6_Init 1 */
+
+	/* USER CODE END TIM6_Init 1 */
+	htim6.Instance = TIM6;
+	htim6.Init.Prescaler = 47999;
+	htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim6.Init.Period = 9999;
+	htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim6) != HAL_OK) {
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM6_Init 2 */
+
+	/* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
+ * @brief TIM8 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM8_Init(void) {
+
+	/* USER CODE BEGIN TIM8_Init 0 */
+
+	/* USER CODE END TIM8_Init 0 */
+
+	TIM_ClockConfigTypeDef sClockSourceConfig = { 0 };
+	TIM_MasterConfigTypeDef sMasterConfig = { 0 };
+	TIM_OC_InitTypeDef sConfigOC = { 0 };
+	TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = { 0 };
+
+	/* USER CODE BEGIN TIM8_Init 1 */
+
+	/* USER CODE END TIM8_Init 1 */
+	htim8.Instance = TIM8;
+	htim8.Init.Prescaler = 0;
+	htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim8.Init.Period = 65535;
+	htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim8.Init.RepetitionCounter = 0;
+	htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim8) != HAL_OK) {
+		Error_Handler();
+	}
+	sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+	if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK) {
+		Error_Handler();
+	}
+	if (HAL_TIM_OC_Init(&htim8) != HAL_OK) {
+		Error_Handler();
+	}
+	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+	sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_RESET;
+	sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+	if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK) {
+		Error_Handler();
+	}
+	sConfigOC.OCMode = TIM_OCMODE_TIMING;
+	sConfigOC.Pulse = 0;
+	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+	sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+	sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+	if (HAL_TIM_OC_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+		Error_Handler();
+	}
+	sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+	sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+	sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+	sBreakDeadTimeConfig.DeadTime = 0;
+	sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+	sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+	sBreakDeadTimeConfig.BreakFilter = 0;
+	sBreakDeadTimeConfig.Break2State = TIM_BREAK2_DISABLE;
+	sBreakDeadTimeConfig.Break2Polarity = TIM_BREAK2POLARITY_HIGH;
+	sBreakDeadTimeConfig.Break2Filter = 0;
+	sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+	if (HAL_TIMEx_ConfigBreakDeadTime(&htim8, &sBreakDeadTimeConfig) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM8_Init 2 */
+
+	/* USER CODE END TIM8_Init 2 */
+	HAL_TIM_MspPostInit(&htim8);
+
+}
+
+/**
+ * @brief USART2 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_USART2_UART_Init(void) {
+
+	/* USER CODE BEGIN USART2_Init 0 */
+
+	/* USER CODE END USART2_Init 0 */
+
+	/* USER CODE BEGIN USART2_Init 1 */
+
+	/* USER CODE END USART2_Init 1 */
+	huart2.Instance = USART2;
+	huart2.Init.BaudRate = 230400;
+	huart2.Init.WordLength = UART_WORDLENGTH_8B;
+	huart2.Init.StopBits = UART_STOPBITS_1;
+	huart2.Init.Parity = UART_PARITY_NONE;
+	huart2.Init.Mode = UART_MODE_TX_RX;
+	huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+	huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+	huart2.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+	huart2.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+	if (HAL_UART_Init(&huart2) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN USART2_Init 2 */
+
+	/* USER CODE END USART2_Init 2 */
+
+}
+
+/**
  * @brief USB Initialization Function
  * @param None
  * @retval None
@@ -349,16 +572,21 @@ static void MX_GPIO_Init(void) {
 	__HAL_RCC_GPIOC_CLK_ENABLE();
 	__HAL_RCC_GPIOF_CLK_ENABLE();
 	__HAL_RCC_GPIOA_CLK_ENABLE();
+	__HAL_RCC_GPIOD_CLK_ENABLE();
 	__HAL_RCC_GPIOB_CLK_ENABLE();
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOE,
-			CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin
-					| LD6_Pin, GPIO_PIN_RESET);
+	CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin | LD6_Pin,
+			GPIO_PIN_RESET);
 
-	/*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT1_Pin
-	 MEMS_INT2_Pin */
-	GPIO_InitStruct.Pin = DRDY_Pin | MEMS_INT3_Pin | MEMS_INT4_Pin | MEMS_INT1_Pin | MEMS_INT2_Pin;
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOD,
+	GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14,
+			GPIO_PIN_RESET);
+
+	/*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT2_Pin */
+	GPIO_InitStruct.Pin = DRDY_Pin | MEMS_INT3_Pin | MEMS_INT4_Pin | MEMS_INT2_Pin;
 	GPIO_InitStruct.Mode = GPIO_MODE_EVT_RISING;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
@@ -379,10 +607,98 @@ static void MX_GPIO_Init(void) {
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
+	/*Configure GPIO pins : PD8 PD9 PD10 PD11
+	 PD12 PD13 PD14 */
+	GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12
+			| GPIO_PIN_13 | GPIO_PIN_14;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PD0 */
+	GPIO_InitStruct.Pin = GPIO_PIN_0;
+	GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+	GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/* EXTI interrupt init*/
+	HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
+	HAL_NVIC_EnableIRQ(EXTI0_IRQn);
+
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+	if (lastExtiTime + 200 > HAL_GetTick())
+		return;
 
+	if (GPIO_Pin == GPIO_PIN_0) {
+		HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+		HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+
+		if (logIdx < LOG_BUFFER_SIZE)
+			logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, movement };
+
+	}
+	lastExtiTime = HAL_GetTick();
+}
+
+log logCache;
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if (htim->Instance == TIM6) {
+		if (logIdx > 0) {
+			for (int i = 0; i < logIdx; i++) {
+				logCache = logBuffer[i];
+				switch (logCache.type) {
+				case movement:
+					sprintf(tmpstr, "Movement detected! time: %d\\%d\\%d - %d:%d:%d\n",
+							logCache.date.Year, logCache.date.Month, logCache.date.Date,
+							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
+					break;
+				case temperature:
+					sprintf(tmpstr,
+							"Temperature Increased one degree! time: %d\\%d\\%d - %d:%d:%d\n",
+							logCache.date.Year, logCache.date.Month, logCache.date.Date,
+							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
+					break;
+				case lightHigh:
+					sprintf(tmpstr, "Environment light is over 80%%! time: %d\\%d\\%d - %d:%d:%d\n",
+							logCache.date.Year, logCache.date.Month, logCache.date.Date,
+							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
+					break;
+				case lightLow:
+					sprintf(tmpstr,
+							"Environment light is under 20%%! time: %d\\%d\\%d - %d:%d:%d\n",
+							logCache.date.Year, logCache.date.Month, logCache.date.Date,
+							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
+					break;
+				}
+
+				HAL_UART_Transmit(&huart2, (uint8_t*) tmpstr, strlen(tmpstr), HAL_MAX_DELAY);
+			}
+			logIdx = 0;
+		}
+	}
+}
+
+void buzzerChangeTone(uint16_t freq, uint16_t volume) {
+	if (freq == 0 || freq > 20000) {
+		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, 0);
+	} else {
+		const uint32_t internalClockFreq = HAL_RCC_GetSysClockFreq();
+		const uint32_t prescaler = 1 + internalClockFreq / freq / 60000;
+		const uint32_t timerClock = internalClockFreq / prescaler;
+		const uint32_t periodCycles = timerClock / freq;
+		const uint32_t pulseWidth = volume * periodCycles / 1000 / 2;
+
+		buzzerPwmTimer->Instance->PSC = prescaler - 1;
+		buzzerPwmTimer->Instance->ARR = periodCycles - 1;
+		buzzerPwmTimer->Instance->EGR = TIM_EGR_UG;
+
+		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, pulseWidth);
+	}
+}
 /* USER CODE END 4 */
 
 /**

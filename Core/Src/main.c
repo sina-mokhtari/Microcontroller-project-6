@@ -94,7 +94,7 @@ uint_fast32_t tmp;
 uint_fast32_t temperatureSamplesSum = 0, lightSamplesSum = 0;
 uint_fast32_t temperatureSamplesCount = 0, lightSamplesCount = 0;
 
-bool buzzerOn = false;
+volatile bool buzzerOn = false;
 bool warning = false;
 
 uint32_t lastExtiTime = 0;
@@ -188,7 +188,7 @@ int main(void) {
 	MX_TIM16_Init();
 	/* USER CODE BEGIN 2 */
 
-	//__NVIC_DisableIRQ(EXTI0_IRQn);
+	__NVIC_DisableIRQ(EXTI0_IRQn);
 	rtcTime.Seconds = 0;
 	rtcTime.Minutes = 0;
 	rtcTime.Hours = 0;
@@ -978,6 +978,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	} else if (htim->Instance == TIM16) {
 		buzzerOn = false;
 		buzzerChangeTone(1000, 0);
+		HAL_ADC_Start_IT(&hadc1); // only this line for fixing not starting again adc after temp raise
 		HAL_TIM_Base_Stop_IT(&htim16);
 	}
 }

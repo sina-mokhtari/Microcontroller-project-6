@@ -979,7 +979,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	} else if (htim->Instance == TIM16) {
 		buzzerOn = false;
 		buzzerChangeTone(1000, 0);
-		//HAL_ADC_Start_IT(&hadc1);
 		HAL_TIM_Base_Stop_IT(&htim16);
 	}
 }
@@ -1002,8 +1001,6 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 				if (!buzzerOn) {
 					buzzerChangeTone(1000, 1000);
 					buzzerOn = true;
-			//		HAL_ADC_Stop_IT(&hadc1);
-				//	HAL_ADC_Stop_IT(&hadc2);
 					HAL_TIM_Base_Start_IT(&htim16);
 				}
 			}
@@ -1012,7 +1009,6 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 			temperatureSamplesSum = 0;
 			updateTemperature();
 		}
-		//if (!buzzerOn)
 			HAL_ADC_Start_IT(&hadc2);
 	} else if (hadc->Instance == ADC2) { // light
 
@@ -1045,12 +1041,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	//HAL_Delay(ADC_DELAY);
 }
 
-char tmpStrDateTime[18];
+char tmpStrDateTime[17];
 void printDateTime() {
 	HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 	HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 
-	sprintf(tmpStrDateTime, "%02d/%02d/%02d-%02d:%02d:%02d", rtcDate.Year, rtcDate.Month,
+	sprintf(tmpStrDateTime, "%d/%d/%d - %02d:%02d:%02d", rtcDate.Year, rtcDate.Month,
 			rtcDate.Date, rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
 	setCursor(2, 3);
 	print(tmpStrDateTime);

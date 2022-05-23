@@ -58,7 +58,7 @@ typedef struct {
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define LOG_BUFFER_SIZE 1000
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 100
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 1000
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -86,22 +86,21 @@ PCD_HandleTypeDef hpcd_USB_FS;
 RTC_TimeTypeDef rtcTime;
 RTC_DateTypeDef rtcDate;
 
-uint_fast16_t temperatueRawValue, lightRawValue;
-uint_fast8_t temperature = 0;
-uint_fast8_t newLight = 0;
-uint_fast8_t previousLight = 0;
-uint_fast8_t tmp;
-uint_fast16_t temperatureSamplesSum = 0, lightSamplesSum = 0;
-uint_fast8_t temperatureSamplesCount = 0, lightSamplesCount = 0;
+uint_fast32_t temperatueRawValue, lightRawValue;
+uint_fast32_t temperature = 0;
+uint_fast32_t newLight = 0;
+uint_fast32_t previousLight = 0;
+uint_fast32_t tmp;
+uint_fast32_t temperatureSamplesSum = 0, lightSamplesSum = 0;
+uint_fast32_t temperatureSamplesCount = 0, lightSamplesCount = 0;
 
 bool buzzerOn = false;
 bool warning = false;
-uint_fast8_t errorTimerCounter = 0;
 
 uint32_t lastExtiTime = 0;
 
 log logBuffer[LOG_BUFFER_SIZE];
-uint_fast16_t logIdx = 0;
+uint_fast32_t logIdx = 0;
 
 TIM_HandleTypeDef *buzzerPwmTimer = &htim8;
 uint32_t buzzerPwmChannel = TIM_CHANNEL_1;
@@ -985,6 +984,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	if (hadc->Instance == ADC1) { // temperature
+		if (buzzerOn)
+			return;
+
 		temperatueRawValue = HAL_ADC_GetValue(hadc);
 
 		temperatureSamplesSum += ((float) temperatueRawValue * 22 / 273); // simplified of (x - 0) * 330 / (4095 - 0)
@@ -1009,7 +1011,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 			temperatureSamplesSum = 0;
 			updateTemperature();
 		}
-			HAL_ADC_Start_IT(&hadc2);
+		HAL_ADC_Start_IT(&hadc2);
 	} else if (hadc->Instance == ADC2) { // light
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
@@ -1046,8 +1048,8 @@ void printDateTime() {
 	HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 	HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 
-	sprintf(tmpStrDateTime, "%d/%d/%d - %02d:%02d:%02d", rtcDate.Year, rtcDate.Month,
-			rtcDate.Date, rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
+	sprintf(tmpStrDateTime, "%d/%d/%d - %02d:%02d:%02d", rtcDate.Year, rtcDate.Month, rtcDate.Date,
+			rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
 	setCursor(2, 3);
 	print(tmpStrDateTime);
 

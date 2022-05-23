@@ -58,7 +58,7 @@ typedef struct {
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define LOG_BUFFER_SIZE 1000
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 1000
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 2000
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -908,8 +908,6 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-//	if (lastExtiTime + 200 > HAL_GetTick())
-//		return;
 	if (warning)
 		return;
 
@@ -928,7 +926,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
 			HAL_TIM_Base_Start_IT(&htim4);
 		}
 	}
-//	lastExtiTime = HAL_GetTick();
 }
 
 log logCache;
@@ -941,13 +938,13 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 				switch (logCache.type) {
 				case motion:
 					sprintf(tmpStrUart,
-							"Motion detected! --- %02d\\%02d\\%02d - %02d:%02d:%02d    \n- - - -\n", //49
+							"Motion detected! --- %02d\\%02d\\%02d - %02d:%02d:%02d      \n- - - -\n",
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
 				case temperatureRaise:
 					sprintf(tmpStrUart,
-							"Temperature Increased! --- %02d\\%02d\\%02d - %02d:%02d:%02d\n- - - -\n", //49
+							"Temperature Increased! --- %02d\\%02d\\%02d - %02d:%02d:%02d\n- - - -\n",
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
@@ -981,7 +978,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 		buzzerOn = false;
 		HAL_TIM_Base_Stop_IT(&htim16);
 		if (!warning)
-			HAL_ADC_Start_IT(&hadc1); // only this line for fixing not starting again adc after temp raise
+			HAL_ADC_Start_IT(&hadc1); // only this line for fixing ADC not starting again after temperature raise
 	}
 }
 
@@ -1020,7 +1017,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
 
-		lightSamplesSum += (float) (lightRawValue / 6);	// simplified of (x - 0) * 100 / (3000 - 0)  x - 120 * 100 / 2900 - 120
+		lightSamplesSum += (float) (lightRawValue / 6);	// simplified of (x - 0) * 100 / (600 - 0)
 
 		lightSamplesCount++;
 

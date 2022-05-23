@@ -188,7 +188,7 @@ int main(void) {
 	MX_TIM16_Init();
 	/* USER CODE BEGIN 2 */
 
-	__NVIC_DisableIRQ(EXTI0_IRQn);
+	//__NVIC_DisableIRQ(EXTI0_IRQn);
 	rtcTime.Seconds = 0;
 	rtcTime.Minutes = 0;
 	rtcTime.Hours = 0;
@@ -973,13 +973,15 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	} else if (htim->Instance == TIM4) {
 		warningOff();
 		warning = false;
-		HAL_ADC_Start_IT(&hadc1);
 		HAL_TIM_Base_Stop_IT(&htim4);
+		if (!buzzerOn)
+			HAL_ADC_Start_IT(&hadc1);
 	} else if (htim->Instance == TIM16) {
-		buzzerOn = false;
 		buzzerChangeTone(1000, 0);
-		HAL_ADC_Start_IT(&hadc1); // only this line for fixing not starting again adc after temp raise
+		buzzerOn = false;
 		HAL_TIM_Base_Stop_IT(&htim16);
+		if (!warning)
+			HAL_ADC_Start_IT(&hadc1); // only this line for fixing not starting again adc after temp raise
 	}
 }
 
@@ -1012,7 +1014,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 			temperatureSamplesSum = 0;
 			updateTemperature();
 		}
-		HAL_ADC_Start_IT(&hadc2);
+		if (!buzzerOn)
+			HAL_ADC_Start_IT(&hadc2);
 	} else if (hadc->Instance == ADC2) { // light
 
 		lightRawValue = HAL_ADC_GetValue(hadc);

@@ -32,7 +32,7 @@
 typedef unsigned char byte;
 
 enum logType {
-	lightLow, lightHigh, movement, temperatureRaise
+	lightLow, lightHigh, motion, temperatureRaise
 };
 
 typedef struct {
@@ -58,7 +58,7 @@ typedef struct {
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define LOG_BUFFER_SIZE 1000
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 50
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 100
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -76,6 +76,7 @@ TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim8;
+TIM_HandleTypeDef htim16;
 
 UART_HandleTypeDef huart2;
 
@@ -85,39 +86,37 @@ PCD_HandleTypeDef hpcd_USB_FS;
 RTC_TimeTypeDef rtcTime;
 RTC_DateTypeDef rtcDate;
 
-char tmpstr[200];
+uint_fast16_t temperatueRawValue, lightRawValue;
+uint_fast8_t temperature = 0;
+uint_fast8_t newLight = 0;
+uint_fast8_t previousLight = 0;
+uint_fast8_t tmp;
+uint_fast16_t temperatureSamplesSum = 0, lightSamplesSum = 0;
+uint_fast8_t temperatureSamplesCount = 0, lightSamplesCount = 0;
 
-int temperatueRawValue, lightRawValue;
-int temperatureNoramlizedValue, lightNormalizedValue;
-int temperature = 0;
-int newLight = 0;
-int previousLight = 0;
-int tmp;
-int temperatureSamplesSum = 0, temperatureSamplesCount = 0, lightSamplesSum = 0, lightSamplesCount =
-		0;
 bool buzzerOn = false;
-bool showError = false;
-int errorTimerCounter = 0;
+bool warning = false;
+uint_fast8_t errorTimerCounter = 0;
 
 uint32_t lastExtiTime = 0;
 
 log logBuffer[LOG_BUFFER_SIZE];
-uint16_t logIdx = 0;
+uint_fast16_t logIdx = 0;
 
 TIM_HandleTypeDef *buzzerPwmTimer = &htim8;
 uint32_t buzzerPwmChannel = TIM_CHANNEL_1;
 
-byte black[] = { 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F };
-byte barEmpty[] = { 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F };
-byte barStart[] = { 0x1F, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F };
-byte barEnd[] = { 0x1F, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x1F };
+byte black[8] = { 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F, 0x1F };
+byte barEmpty[8] = { 0x1F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F };
+byte barStart[8] = { 0x1F, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F };
+byte barEnd[8] = { 0x1F, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x1F };
 
-byte sun[] = { 0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E, 0x00 };
-byte sunShineRight[] = { 0x00, 0x08, 0x10, 0x00, 0x1E, 0x00, 0x10, 0x08 };
-byte sunShineLeft[] = { 0x00, 0x02, 0x01, 0x00, 0x0F, 0x00, 0x01, 0x02 };
+byte sunCenter[8] = { 0B00100, 0B01110, 0B10001, 0B10001, 0B10001, 0B01110, 0B00100, 0B00000 };
+byte sunShineRight[8] = { 0x08, 0x10, 0x00, 0x1E, 0x00, 0x10, 0x08, 0x00 };
+byte sunShineLeft[8] = { 0x02, 0x01, 0x00, 0x0F, 0x00, 0x01, 0x02, 0x00 };
 
-byte thermometer[] = { 0x00, 0x06, 0x06, 0x06, 0x06, 0x09, 0x09, 0x06 };
-byte degree[] = { 0x00, 0x07, 0x05, 0x07, 0x00, 0x00, 0x00, 0x00 };
+byte thermometer[8] = { 0x00, 0x06, 0x06, 0x06, 0x06, 0x09, 0x09, 0x06 };
+byte degree[8] = { 0x00, 0x07, 0x05, 0x07, 0x00, 0x00, 0x00, 0x00 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -134,11 +133,14 @@ static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 void buzzerChangeTone(uint16_t freq, uint16_t volume);
 void printDateTime();
 void updateLightBar();
 void updateTemperature();
+void warningOn();
+void warningOff();
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -184,8 +186,10 @@ int main(void) {
 	MX_ADC2_Init();
 	MX_TIM7_Init();
 	MX_TIM4_Init();
+	MX_TIM16_Init();
 	/* USER CODE BEGIN 2 */
 
+	//__NVIC_DisableIRQ(EXTI0_IRQn);
 	rtcTime.Seconds = 0;
 	rtcTime.Minutes = 0;
 	rtcTime.Hours = 0;
@@ -194,14 +198,14 @@ int main(void) {
 	rtcDate.Month = 0;
 	rtcDate.Date = 0;
 
-	HAL_RTC_SetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 	HAL_RTC_SetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+	HAL_RTC_SetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 
 	LiquidCrystal(GPIOD, LCD_D8, LCD_D9, LCD_D10, LCD_D11, LCD_D12, LCD_D13,
 	LCD_D14);
 
 	createChar(0, sunShineLeft);
-	createChar(1, sun);
+	createChar(1, sunCenter);
 	createChar(2, sunShineRight);
 	createChar(3, black);
 	createChar(4, barEmpty);
@@ -211,8 +215,6 @@ int main(void) {
 
 	begin(20, 4);
 
-	//clear();
-	setCursor(0, 0);
 	write(0);
 	write(1);
 	write(2);
@@ -221,8 +223,6 @@ int main(void) {
 	setCursor(5, 2);
 	write(7);
 	write('C');
-	setCursor(17, 0);
-	write('%');
 
 	HAL_TIM_Base_Start_IT(&htim6);
 	HAL_TIM_Base_Start_IT(&htim7);
@@ -237,8 +237,10 @@ int main(void) {
 		/* USER CODE END WHILE */
 
 		/* USER CODE BEGIN 3 */
-
-		//HAL_Delay(100);
+		/*char tmpp[10];
+		 sprintf(tmpp, "%d\n", HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0));
+		 HAL_UART_Transmit(&huart2, (uint8_t*) tmpp, strlen(tmpp), HAL_MAX_DELAY);
+		 HAL_Delay(100);*/
 	}
 	/* USER CODE END 3 */
 }
@@ -282,9 +284,8 @@ void SystemClock_Config(void) {
 		Error_Handler();
 	}
 	PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB | RCC_PERIPHCLK_USART2
-			| RCC_PERIPHCLK_I2C1 | RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_TIM8 | RCC_PERIPHCLK_ADC12;
+			| RCC_PERIPHCLK_I2C1 | RCC_PERIPHCLK_RTC | RCC_PERIPHCLK_TIM8;
 	PeriphClkInit.Usart2ClockSelection = RCC_USART2CLKSOURCE_PCLK1;
-	PeriphClkInit.Adc12ClockSelection = RCC_ADC12PLLCLK_DIV1;
 	PeriphClkInit.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
 	PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSI;
 	PeriphClkInit.USBClockSelection = RCC_USBCLKSOURCE_PLL;
@@ -315,7 +316,7 @@ static void MX_ADC1_Init(void) {
 	/** Common config
 	 */
 	hadc1.Instance = ADC1;
-	hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+	hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
 	hadc1.Init.Resolution = ADC_RESOLUTION_12B;
 	hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
 	hadc1.Init.ContinuousConvMode = DISABLE;
@@ -376,7 +377,7 @@ static void MX_ADC2_Init(void) {
 	/** Common config
 	 */
 	hadc2.Instance = ADC2;
-	hadc2.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+	hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
 	hadc2.Init.Resolution = ADC_RESOLUTION_12B;
 	hadc2.Init.ScanConvMode = ADC_SCAN_DISABLE;
 	hadc2.Init.ContinuousConvMode = DISABLE;
@@ -695,7 +696,7 @@ static void MX_TIM8_Init(void) {
 	if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK) {
 		Error_Handler();
 	}
-	if (HAL_TIM_OC_Init(&htim8) != HAL_OK) {
+	if (HAL_TIM_PWM_Init(&htim8) != HAL_OK) {
 		Error_Handler();
 	}
 	sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
@@ -704,14 +705,14 @@ static void MX_TIM8_Init(void) {
 	if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK) {
 		Error_Handler();
 	}
-	sConfigOC.OCMode = TIM_OCMODE_TIMING;
+	sConfigOC.OCMode = TIM_OCMODE_PWM1;
 	sConfigOC.Pulse = 0;
 	sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
 	sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
 	sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
 	sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
 	sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
-	if (HAL_TIM_OC_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
+	if (HAL_TIM_PWM_ConfigChannel(&htim8, &sConfigOC, TIM_CHANNEL_1) != HAL_OK) {
 		Error_Handler();
 	}
 	sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
@@ -732,6 +733,36 @@ static void MX_TIM8_Init(void) {
 
 	/* USER CODE END TIM8_Init 2 */
 	HAL_TIM_MspPostInit(&htim8);
+
+}
+
+/**
+ * @brief TIM16 Initialization Function
+ * @param None
+ * @retval None
+ */
+static void MX_TIM16_Init(void) {
+
+	/* USER CODE BEGIN TIM16_Init 0 */
+
+	/* USER CODE END TIM16_Init 0 */
+
+	/* USER CODE BEGIN TIM16_Init 1 */
+
+	/* USER CODE END TIM16_Init 1 */
+	htim16.Instance = TIM16;
+	htim16.Init.Prescaler = 14399;
+	htim16.Init.CounterMode = TIM_COUNTERMODE_UP;
+	htim16.Init.Period = 9999;
+	htim16.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+	htim16.Init.RepetitionCounter = 0;
+	htim16.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+	if (HAL_TIM_Base_Init(&htim16) != HAL_OK) {
+		Error_Handler();
+	}
+	/* USER CODE BEGIN TIM16_Init 2 */
+
+	/* USER CODE END TIM16_Init 2 */
 
 }
 
@@ -815,13 +846,16 @@ static void MX_GPIO_Init(void) {
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOE,
-			CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin
-					| LD6_Pin, GPIO_PIN_RESET);
+	CS_I2C_SPI_Pin | LD4_Pin | LD3_Pin | LD5_Pin | LD7_Pin | LD9_Pin | LD10_Pin | LD8_Pin | LD6_Pin,
+			GPIO_PIN_RESET);
 
 	/*Configure GPIO pin Output Level */
 	HAL_GPIO_WritePin(GPIOD,
-			GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13
-					| GPIO_PIN_14 | GPIO_PIN_15, GPIO_PIN_RESET);
+	GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12 | GPIO_PIN_13 | GPIO_PIN_14,
+			GPIO_PIN_RESET);
+
+	/*Configure GPIO pin Output Level */
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_RESET);
 
 	/*Configure GPIO pins : DRDY_Pin MEMS_INT3_Pin MEMS_INT4_Pin MEMS_INT2_Pin */
 	GPIO_InitStruct.Pin = DRDY_Pin | MEMS_INT3_Pin | MEMS_INT4_Pin | MEMS_INT2_Pin;
@@ -846,13 +880,20 @@ static void MX_GPIO_Init(void) {
 	HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
 	/*Configure GPIO pins : PD8 PD9 PD10 PD11
-	 PD12 PD13 PD14 PD15 */
+	 PD12 PD13 PD14 */
 	GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12
-			| GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+			| GPIO_PIN_13 | GPIO_PIN_14;
 	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 	HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+	/*Configure GPIO pin : PC7 */
+	GPIO_InitStruct.Pin = GPIO_PIN_7;
+	GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+	GPIO_InitStruct.Pull = GPIO_NOPULL;
+	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+	HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
 	/*Configure GPIO pin : PD0 */
 	GPIO_InitStruct.Pin = GPIO_PIN_0;
@@ -868,84 +909,78 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (lastExtiTime + 200 > HAL_GetTick())
+//	if (lastExtiTime + 200 > HAL_GetTick())
+//		return;
+	if (warning)
 		return;
 
 	if (GPIO_Pin == GPIO_PIN_0) {
-		HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 		HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
-		HAL_TIM_Base_Start_IT(&htim4);
-		showError = true;
-		if (logIdx < LOG_BUFFER_SIZE)
-			logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, movement };
+		HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 
+		if (logIdx < LOG_BUFFER_SIZE)
+			logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, motion };
+
+		if (!warning) {
+			HAL_ADC_Stop_IT(&hadc1);
+			HAL_ADC_Stop_IT(&hadc2);
+			warningOn();
+			warning = true;
+			HAL_TIM_Base_Start_IT(&htim4);
+		}
 	}
-	lastExtiTime = HAL_GetTick();
+//	lastExtiTime = HAL_GetTick();
 }
 
 log logCache;
+char tmpStrUart[56];
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	if (htim->Instance == TIM6) {
 		if (logIdx > 0) {
 			for (int i = 0; i < logIdx; i++) {
 				logCache = logBuffer[i];
 				switch (logCache.type) {
-				case movement:
-					sprintf(tmpstr, "Movement detected! time: %d\\%d\\%d - %d:%d:%d\n",
+				case motion:
+					sprintf(tmpStrUart,
+							"Motion detected! --- %02d\\%02d\\%02d - %02d:%02d:%02d    \n- - - -\n", //49
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
 				case temperatureRaise:
-					sprintf(tmpstr,
-							"Temperature Increased one degree! time: %d\\%d\\%d - %d:%d:%d\n",
+					sprintf(tmpStrUart,
+							"Temperature Increased! --- %02d\\%02d\\%02d - %02d:%02d:%02d\n- - - -\n", //49
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
 				case lightHigh:
-					sprintf(tmpstr, "Environment light is over 80%%! time: %d\\%d\\%d - %d:%d:%d\n",
+					sprintf(tmpStrUart,
+							"Light is over 80%%! --- %02d\\%02d\\%02d - %02d:%02d:%02d    \n- - - -\n",
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
 				case lightLow:
-					sprintf(tmpstr,
-							"Environment light is under 20%%! time: %d\\%d\\%d - %d:%d:%d\n",
+					sprintf(tmpStrUart,
+							"Light is under 20%%! --- %02d\\%02d\\%02d - %02d:%02d:%02d   \n- - - -\n",
 							logCache.date.Year, logCache.date.Month, logCache.date.Date,
 							logCache.time.Hours, logCache.time.Minutes, logCache.time.Seconds);
 					break;
 				}
-
-				HAL_UART_Transmit(&huart2, (uint8_t*) tmpstr, strlen(tmpstr), HAL_MAX_DELAY);
+				HAL_UART_Transmit(&huart2, (uint8_t*) tmpStrUart, 55, HAL_MAX_DELAY);
 			}
 			logIdx = 0;
 		}
-	}
-	if (htim->Instance == TIM7) {
+	} else if (htim->Instance == TIM7) {
 		printDateTime();
-	}
-	if (htim->Instance == TIM4) {
-		errorTimerCounter++;
-		if (errorTimerCounter == 1) {
-			if (buzzerOn) {
-				buzzerChangeTone(1000, 1000);
-			} else if (showError) {
-				setCursor(9, 2);
-				print("MOVE!!!");
-				HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 1);
-			}
-		} else if (errorTimerCounter == 3) {
-			if (buzzerOn) {
-				buzzerChangeTone(1000, 0);
-				buzzerOn = false;
-			} else if (showError) {
-				setCursor(9, 2);
-				print("       ");
-				HAL_GPIO_WritePin(GPIOD, GPIO_PIN_15, 0);
-				showError = false;
-			}
-			HAL_TIM_Base_Stop_IT(&htim4);
-			errorTimerCounter = 0;
-		}
-
+	} else if (htim->Instance == TIM4) {
+		warningOff();
+		warning = false;
+		HAL_ADC_Start_IT(&hadc1);
+		HAL_TIM_Base_Stop_IT(&htim4);
+	} else if (htim->Instance == TIM16) {
+		buzzerOn = false;
+		buzzerChangeTone(1000, 0);
+		//HAL_ADC_Start_IT(&hadc1);
+		HAL_TIM_Base_Stop_IT(&htim16);
 	}
 }
 
@@ -960,85 +995,83 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 		if (temperatureSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
 			tmp = temperatureSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
 			if (tmp > temperature) {
-				HAL_TIM_Base_Start_IT(&htim4);
-				buzzerOn = true;
-				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				if (logIdx < LOG_BUFFER_SIZE)
 					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, temperatureRaise };
+				if (!buzzerOn) {
+					buzzerChangeTone(1000, 1000);
+					buzzerOn = true;
+			//		HAL_ADC_Stop_IT(&hadc1);
+				//	HAL_ADC_Stop_IT(&hadc2);
+					HAL_TIM_Base_Start_IT(&htim16);
+				}
 			}
 			temperature = tmp;
 			temperatureSamplesCount = 0;
 			temperatureSamplesSum = 0;
 			updateTemperature();
 		}
-		HAL_ADC_Start_IT(&hadc2);
+		//if (!buzzerOn)
+			HAL_ADC_Start_IT(&hadc2);
 	} else if (hadc->Instance == ADC2) { // light
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
 
-		lightSamplesSum += (float) lightRawValue / 30;	// simplified of (x - 0) * 100 / (3000 - 0)
+		lightSamplesSum += (float) (lightRawValue / 6);	// simplified of (x - 0) * 100 / (3000 - 0)  x - 120 * 100 / 2900 - 120
 
 		lightSamplesCount++;
 
 		if (lightSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
 			newLight = lightSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+			newLight = newLight > 100 ? 100 : newLight;
 			lightSamplesCount = 0;
 			lightSamplesSum = 0;
 			updateLightBar();
 			if (newLight > 80) {
-				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				if (logIdx < LOG_BUFFER_SIZE)
 					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightHigh };
 			} else if (newLight < 20) {
-				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				if (logIdx < LOG_BUFFER_SIZE)
 					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightLow };
 			}
 		}
-
 		HAL_ADC_Start_IT(&hadc1);
-		HAL_Delay(ADC_DELAY);
 	}
+	//HAL_Delay(ADC_DELAY);
 }
 
+char tmpStrDateTime[18];
 void printDateTime() {
-	HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 	HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+	HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+
+	sprintf(tmpStrDateTime, "%02d/%02d/%02d-%02d:%02d:%02d", rtcDate.Year, rtcDate.Month,
+			rtcDate.Date, rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
 	setCursor(2, 3);
-	sprintf(tmpstr, "%02d/%02d/%02d-%02d:%02d:%02d", rtcDate.Year, rtcDate.Month, rtcDate.Date,
-			rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
-	print(tmpstr);
-}
-void buzzerChangeTone(uint16_t freq, uint16_t volume) {
-	if (freq == 0 || freq > 20000) {
-		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, 0);
-	} else {
-		const uint32_t internalClockFreq = HAL_RCC_GetSysClockFreq();
-		const uint32_t prescaler = 1 + internalClockFreq / freq / 60000;
-		const uint32_t timerClock = internalClockFreq / prescaler;
-		const uint32_t periodCycles = timerClock / freq;
-		const uint32_t pulseWidth = volume * periodCycles / 1000 / 2;
+	print(tmpStrDateTime);
 
-		buzzerPwmTimer->Instance->PSC = prescaler - 1;
-		buzzerPwmTimer->Instance->ARR = periodCycles - 1;
-		buzzerPwmTimer->Instance->EGR = TIM_EGR_UG;
-
-		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, pulseWidth);
-	}
 }
 
+char tmpStrLight[3];
 void updateLightBar() {
+	if (newLight == previousLight)
+		return;
+
+	sprintf(tmpStrLight, "%d%%", newLight < 100 ? newLight : 100);
 	setCursor(15, 0);
-	sprintf(tmpstr, "%02d", newLight);
-	print(tmpstr);
+	print(tmpStrLight);
 
 	if (newLight / 10 == previousLight / 10)
 		return;
 
 	if (newLight < 10) {
+		setCursor(17, 0);
+		print(" ");
 		createChar(3, barStart);
 		setCursor(3, 0);
 		write(3);
@@ -1046,6 +1079,11 @@ void updateLightBar() {
 		createChar(3, black);
 		setCursor(3, 0);
 		write(3);
+	}
+
+	if (previousLight == 100) {
+		setCursor(18, 0);
+		print(" ");
 	}
 
 	for (int i = 4; i < 12; i++) {
@@ -1069,11 +1107,42 @@ void updateLightBar() {
 	previousLight = newLight;
 }
 
+char tmpStrTemp[3];
 void updateTemperature() {
+	sprintf(tmpStrTemp, "%02d", temperature);
 	setCursor(3, 2);
-	sprintf(tmpstr, "%02d", temperature);
-	print(tmpstr);
+	print(tmpStrTemp);
 }
+
+void warningOn() {
+	setCursor(9, 2);
+	print("MOTION!!!");
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 1);
+}
+void warningOff() {
+	setCursor(9, 2);
+	print("         ");
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
+}
+
+void buzzerChangeTone(uint16_t freq, uint16_t volume) {
+	if (freq == 0 || freq > 20000) {
+		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, 0);
+	} else {
+		const uint32_t internalClockFreq = HAL_RCC_GetSysClockFreq();
+		const uint32_t prescaler = 1 + internalClockFreq / freq / 60000;
+		const uint32_t timerClock = internalClockFreq / prescaler;
+		const uint32_t periodCycles = timerClock / freq;
+		const uint32_t pulseWidth = volume * periodCycles / 1000 / 2;
+
+		buzzerPwmTimer->Instance->PSC = prescaler - 1;
+		buzzerPwmTimer->Instance->ARR = periodCycles - 1;
+		buzzerPwmTimer->Instance->EGR = TIM_EGR_UG;
+
+		__HAL_TIM_SET_COMPARE(buzzerPwmTimer, buzzerPwmChannel, pulseWidth);
+	}
+}
+
 /* USER CODE END 4 */
 
 /**

@@ -57,8 +57,8 @@ typedef struct {
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define LOG_BUFFER_SIZE 1000
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 2000
+#define LOG_BUFFER_SIZE 100
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 100
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -86,21 +86,19 @@ PCD_HandleTypeDef hpcd_USB_FS;
 RTC_TimeTypeDef rtcTime;
 RTC_DateTypeDef rtcDate;
 
-uint_fast32_t temperatueRawValue, lightRawValue;
-uint_fast32_t temperature = 0;
-uint_fast32_t newLight = 0;
-uint_fast32_t previousLight = 0;
-uint_fast32_t tmp;
-uint_fast32_t temperatureSamplesSum = 0, lightSamplesSum = 0;
-uint_fast32_t temperatureSamplesCount = 0, lightSamplesCount = 0;
+uint_fast16_t temperatueRawValue, lightRawValue;
+uint_fast8_t temperature = 0;
+uint_fast8_t newLight = 0;
+uint_fast8_t previousLight = 0;
+uint_fast8_t tmp;
+uint_fast16_t temperatureSamplesSum = 0, lightSamplesSum = 0;
+uint_fast8_t temperatureSamplesCount = 0, lightSamplesCount = 0;
 
-volatile bool buzzerOn = false;
+bool buzzerOn = false;
 bool warning = false;
 
-uint32_t lastExtiTime = 0;
-
 log logBuffer[LOG_BUFFER_SIZE];
-uint_fast32_t logIdx = 0;
+uint_fast8_t logIdx = 0;
 
 TIM_HandleTypeDef *buzzerPwmTimer = &htim8;
 uint32_t buzzerPwmChannel = TIM_CHANNEL_1;
@@ -908,10 +906,10 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
-	if (warning)
-		return;
-
 	if (GPIO_Pin == GPIO_PIN_0) {
+		if (warning)
+			return;
+
 		HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 		HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 
@@ -1017,7 +1015,11 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
 
-		lightSamplesSum += (float) (lightRawValue / 6);	// simplified of (x - 0) * 100 / (600 - 0)
+		/*char tmpp[20];
+		 sprintf(tmpp,"%d\n", lightRawValue);
+		 HAL_UART_Transmit(&huart2, tmpp, strlen(tmpp), HAL_MAX_DELAY);
+		 */
+		lightSamplesSum += (float) (lightRawValue / 5);	// simplified of (x - 0) * 100 / (600 - 0)
 
 		lightSamplesCount++;
 

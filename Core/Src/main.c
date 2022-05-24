@@ -58,7 +58,7 @@ typedef struct {
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define LOG_BUFFER_SIZE 100
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 1024
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 128
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -1005,8 +1005,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 	if (hadc->Instance == ADC1) { // lastTemperature
-		//if (buzzerOn)
-		//return;
+		if (buzzerOn)
+		return;
 
 		/*char tmpp[50];
 		 sprintf(tmpp, "temperature ADC begin : %lu\n", HAL_GetTick());
@@ -1025,8 +1025,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 		temperatureSamplingArr[temperatureSamplingIdx] = normalTemperature;
 
-		if (temperatureSamplingIdx == 0) {
-			newTemperature = temperatureSamplingSum >> 10;
+		//if (temperatureSamplingIdx == 0) {
+			newTemperature = temperatureSamplingSum >> 7;
 
 			if (newTemperature > lastTemperature) {
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
@@ -1040,12 +1040,12 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 				}
 			}
 			updateTemperature();
-		}
+		//}
 
 		temperatureSamplingIdx = (temperatureSamplingIdx + 1)
 				% TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
 
-		//if (!buzzerOn)
+		if (!buzzerOn)
 		HAL_ADC_Start_IT(&hadc2);
 
 	} else if (hadc->Instance == ADC2) { // light
@@ -1058,8 +1058,8 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 
 		lightSamplingArr[lightSamplingIdx] = normalLight;
 
-		if (lightSamplingIdx == 0) {
-			newLight = lightSamplingSum >> 10;
+		//if (lightSamplingIdx == 0) {
+			newLight = lightSamplingSum >> 7;
 			newLight = newLight > 100 ? 100 : newLight;
 			if (newLight > 80) {
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
@@ -1073,7 +1073,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightLow };
 			}
 			updateLight();
-		}
+		//}
 		/*
 		 if (lightSamplingIdx == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
 		 newLight = lightSamplingSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;

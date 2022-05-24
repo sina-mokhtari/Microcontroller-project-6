@@ -58,7 +58,7 @@ typedef struct {
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
 #define LOG_BUFFER_SIZE 100
-#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 100
+#define TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM 1024
 #define ADC_DELAY 1
 /* USER CODE END PM */
 
@@ -83,22 +83,31 @@ UART_HandleTypeDef huart2;
 PCD_HandleTypeDef hpcd_USB_FS;
 
 /* USER CODE BEGIN PV */
+
+uint_fast16_t temperatureSamplingArr[TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM];
+uint_fast16_t lightSamplingArr[TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM];
+
 RTC_TimeTypeDef rtcTime;
 RTC_DateTypeDef rtcDate;
 
-uint_fast16_t temperatueRawValue, lightRawValue;
-uint_fast8_t temperature = 0;
-uint_fast8_t newLight = 0;
-uint_fast8_t previousLight = 0;
-uint_fast8_t tmp;
-uint_fast16_t temperatureSamplesSum = 0, lightSamplesSum = 0;
-uint_fast8_t temperatureSamplesCount = 0, lightSamplesCount = 0;
+uint_fast32_t temperatureSamplingIdx = 0;
+uint_fast32_t sum = 25 * TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+uint_fast32_t temperatueRawValue, lightRawValue;
+uint_fast32_t lastTemperature = 0;
+uint_fast32_t newLight = 0;
+uint_fast32_t lastLight = 0;
+uint_fast32_t newTemperature;
+uint_fast32_t normalTemperature;
+uint_fast32_t normalLight;
+uint_fast32_t temperatureSamplingSum = 25 * TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM,
+		lightSamplingSum = 30 * TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+uint_fast32_t lightSamplingIdx = 0;
 
 bool buzzerOn = false;
 bool warning = false;
 
 log logBuffer[LOG_BUFFER_SIZE];
-uint_fast8_t logIdx = 0;
+uint_fast32_t logIdx = 0;
 
 TIM_HandleTypeDef *buzzerPwmTimer = &htim8;
 uint32_t buzzerPwmChannel = TIM_CHANNEL_1;
@@ -134,7 +143,7 @@ static void MX_TIM16_Init(void);
 /* USER CODE BEGIN PFP */
 void buzzerChangeTone(uint16_t freq, uint16_t volume);
 void printDateTime();
-void updateLightBar();
+void updateLight();
 void updateTemperature();
 void warningOn();
 void warningOff();
@@ -226,6 +235,19 @@ int main(void) {
 	HAL_TIM_PWM_Start(buzzerPwmTimer, buzzerPwmChannel);
 	HAL_ADC_Start_IT(&hadc1);
 
+	for (int i = 0; i < TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM; i++) {
+		temperatureSamplingArr[i] = 25; //((float) HAL_ADC_GetValue(&hadc1) * 22 / 273);
+	}
+
+	for (int i = 0; i < TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM; i++) {
+		lightSamplingArr[i] = 30; //((float) HAL_ADC_GetValue(&hadc1) * 22 / 273);
+	}
+
+	/*char tmpp[10];
+	 sprintf(tmpp, "%d\n", HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0));
+	 HAL_UART_Transmit(&huart2, (uint8_t*) tmpp, strlen(tmpp), HAL_MAX_DELAY);
+	 HAL_Delay(100);
+	 */
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
@@ -585,7 +607,7 @@ static void MX_TIM4_Init(void) {
 		Error_Handler();
 	}
 	/* USER CODE BEGIN TIM4_Init 2 */
-
+	htim4.Instance->SR = 0;				// for timer to work properly form first time triggered
 	/* USER CODE END TIM4_Init 2 */
 
 }
@@ -973,6 +995,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 			HAL_ADC_Start_IT(&hadc1);
 	} else if (htim->Instance == TIM16) {
 		buzzerChangeTone(1000, 0);
+		HAL_Delay(50);
 		buzzerOn = false;
 		HAL_TIM_Base_Stop_IT(&htim16);
 		if (!warning)
@@ -981,19 +1004,31 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
-	if (hadc->Instance == ADC1) { // temperature
-		if (buzzerOn)
-			return;
+	if (hadc->Instance == ADC1) { // lastTemperature
+		//if (buzzerOn)
+		//return;
 
+		/*char tmpp[50];
+		 sprintf(tmpp, "temperature ADC begin : %lu\n", HAL_GetTick());
+		 HAL_UART_Transmit(&huart2, (uint8_t*) tmpp, strlen(tmpp), HAL_MAX_DELAY);
+		 */
 		temperatueRawValue = HAL_ADC_GetValue(hadc);
 
-		temperatureSamplesSum += ((float) temperatueRawValue * 22 / 273); // simplified of (x - 0) * 330 / (4095 - 0)
+		char tmpp[50];
+		sprintf(tmpp, "%d\n", temperatueRawValue);
+		HAL_UART_Transmit(&huart2, (uint8_t*) tmpp, strlen(tmpp), HAL_MAX_DELAY);
 
-		temperatureSamplesCount++;
+		normalTemperature = ((float) temperatueRawValue * 22 / 273);
 
-		if (temperatureSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
-			tmp = temperatureSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
-			if (tmp > temperature) {
+		temperatureSamplingSum += (normalTemperature
+				- temperatureSamplingArr[temperatureSamplingIdx]);
+
+		temperatureSamplingArr[temperatureSamplingIdx] = normalTemperature;
+
+		if (temperatureSamplingIdx == 0) {
+			newTemperature = temperatureSamplingSum >> 10;
+
+			if (newTemperature > lastTemperature) {
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
 				if (logIdx < LOG_BUFFER_SIZE)
@@ -1004,31 +1039,28 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 					HAL_TIM_Base_Start_IT(&htim16);
 				}
 			}
-			temperature = tmp;
-			temperatureSamplesCount = 0;
-			temperatureSamplesSum = 0;
 			updateTemperature();
 		}
-		if (!buzzerOn)
-			HAL_ADC_Start_IT(&hadc2);
+
+		temperatureSamplingIdx = (temperatureSamplingIdx + 1)
+				% TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+
+		//if (!buzzerOn)
+		HAL_ADC_Start_IT(&hadc2);
+
 	} else if (hadc->Instance == ADC2) { // light
 
 		lightRawValue = HAL_ADC_GetValue(hadc);
 
-		/*char tmpp[20];
-		 sprintf(tmpp,"%d\n", lightRawValue);
-		 HAL_UART_Transmit(&huart2, tmpp, strlen(tmpp), HAL_MAX_DELAY);
-		 */
-		lightSamplesSum += (float) (lightRawValue / 5);	// simplified of (x - 0) * 100 / (600 - 0)
+		normalLight = (float) (lightRawValue / 5);	// simplified of (x - 0) * 100 / (600 - 0)
 
-		lightSamplesCount++;
+		lightSamplingSum += normalLight - lightSamplingArr[lightSamplingIdx];
 
-		if (lightSamplesCount == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
-			newLight = lightSamplesSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+		lightSamplingArr[lightSamplingIdx] = normalLight;
+
+		if (lightSamplingIdx == 0) {
+			newLight = lightSamplingSum >> 10;
 			newLight = newLight > 100 ? 100 : newLight;
-			lightSamplesCount = 0;
-			lightSamplesSum = 0;
-			updateLightBar();
 			if (newLight > 80) {
 				HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
 				HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
@@ -1040,10 +1072,35 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc) {
 				if (logIdx < LOG_BUFFER_SIZE)
 					logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightLow };
 			}
+			updateLight();
 		}
+		/*
+		 if (lightSamplingIdx == TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM) {
+		 newLight = lightSamplingSum / TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+		 newLight = newLight > 100 ? 100 : newLight;
+		 lightSamplingIdx = 0;
+		 lightSamplingSum = 0;
+		 updateLight();
+		 if (newLight > 80) {
+		 HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+		 HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+		 if (logIdx < LOG_BUFFER_SIZE)
+		 logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightHigh };
+		 } else if (newLight < 20) {
+		 HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+		 HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+		 if (logIdx < LOG_BUFFER_SIZE)
+		 logBuffer[logIdx++] = (log ) { rtcDate, rtcTime, lightLow };
+		 }
+		 }
+		 */
+		lightSamplingIdx = (lightSamplingIdx + 1) % TEMPERATUER_LIGHT_FILTERING_SAMPLE_NUM;
+
 		HAL_ADC_Start_IT(&hadc1);
+
+		/*sprintf(tmpp, "light ADC end : %lu\n", HAL_GetTick());
+		 HAL_UART_Transmit(&huart2, (uint8_t*) tmpp, strlen(tmpp), HAL_MAX_DELAY);*/
 	}
-	//HAL_Delay(ADC_DELAY);
 }
 
 char tmpStrDateTime[17];
@@ -1059,15 +1116,15 @@ void printDateTime() {
 }
 
 char tmpStrLight[3];
-void updateLightBar() {
-	if (newLight == previousLight)
+void updateLight() {
+	if (newLight == lastLight)
 		return;
 
 	sprintf(tmpStrLight, "%d%%", newLight < 100 ? newLight : 100);
 	setCursor(15, 0);
 	print(tmpStrLight);
 
-	if (newLight / 10 == previousLight / 10)
+	if (newLight / 10 == lastLight / 10)
 		return;
 
 	if (newLight < 10) {
@@ -1082,7 +1139,7 @@ void updateLightBar() {
 		write(3);
 	}
 
-	if (previousLight == 100) {
+	if (lastLight == 100) {
 		setCursor(18, 0);
 		print(" ");
 	}
@@ -1105,25 +1162,33 @@ void updateLightBar() {
 		write(5);
 	}
 
-	previousLight = newLight;
+	lastLight = newLight;
+	HAL_Delay(50);
 }
 
 char tmpStrTemp[3];
 void updateTemperature() {
-	sprintf(tmpStrTemp, "%02d", temperature);
+	if (newTemperature == lastTemperature)
+		return;
+
+	sprintf(tmpStrTemp, "%02d", newTemperature);
 	setCursor(3, 2);
 	print(tmpStrTemp);
+
+	lastTemperature = newTemperature;
 }
 
 void warningOn() {
 	setCursor(9, 2);
 	print("MOTION!!!");
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 1);
+	//HAL_Delay(50);
 }
 void warningOff() {
 	setCursor(9, 2);
 	print("         ");
 	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, 0);
+	//HAL_Delay(50);
 }
 
 void buzzerChangeTone(uint16_t freq, uint16_t volume) {
